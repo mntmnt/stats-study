@@ -27,12 +27,12 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 
 BAUDRATE=9600
-UNO_COMPORT='COM15'
+UNO_COMPORT='COM3'
 PRINT_CONSOLE_LOG=True
 PLOT_UPDATE_EACH_ms=3000
 MAX_ARRAY_LIMIT_BEFORE_SHIFTING=3600 # for each second it gives 1 hour
 START_TIME = datetime.datetime.now()
-CSV_FILE_NAME='preasure_Start{}.csv'.format(START_TIME.strftime("%d_%m_%H-%M-%S"))
+CSV_FILE_NAME='pressure_Start{}.csv'.format(START_TIME.strftime("%d_%m_%H-%M-%S"))
 
 def log(msg):
     if PRINT_CONSOLE_LOG:
@@ -49,39 +49,39 @@ def signal_handler(sig, frame):
     g_CSVFile.close()
     sys.exit(0)
 
-# ----------------- Reading Preasure and Arduino stuff------
-g_TimeLine, g_Preassures, g_TickCounter = [], [], 0
+# ----------------- Reading Pressure and Arduino stuff------
+g_TimeLine, g_Pressures, g_TickCounter = [], [], 0
 
 
-def extract_preasure(message):
-    m = re.search('Preasure:\s*(\d+?)$', message)
+def extract_pressure(message):
+    m = re.search('Pressure:\s*(\d+?)Pa$', message)
     return int(m.group(1)) if m else None
 
 
-def to_mm_m_c(preasure_pa):
-    return preasure_pa / 133.3224
+def to_mm_m_c(pressure_pa):
+    return pressure_pa / 133.3224
 
 
-def add_preasure(preasure_pa):
-    global g_Preassures
+def add_pressure(pressure_pa):
+    global g_Pressures
     global g_TimeLine
     global g_TickCounter
     g_TickCounter += 1
 
-    g_CSVFile.write(f"{g_TickCounter};{preasure_pa}\n")
+    g_CSVFile.write(f"{g_TickCounter};{pressure_pa}\n")
     if g_TickCounter % 10:
         g_CSVFile.flush()
         
-    if len(g_Preassures) < MAX_ARRAY_LIMIT_BEFORE_SHIFTING:
-        g_Preassures = np.append( g_Preassures, [preasure_pa])
+    if len(g_Pressures) < MAX_ARRAY_LIMIT_BEFORE_SHIFTING:
+        g_Pressures = np.append( g_Pressures, [pressure_pa])
         g_TimeLine = np.append( g_TimeLine, [g_TickCounter] )
     else:
-        g_Preassures = np.roll(g_Preassures, -1)
+        g_Pressures = np.roll(g_Pressures, -1)
         g_TimeLine   = np.roll(g_TimeLine,   -1)
-        g_Preassures[-1] = preasure_pa
+        g_Pressures[-1] = pressure_pa
         g_TimeLine[-1]   = g_TickCounter
 
-    log("Preasure> {} pa ({} mm of mercury column)".format(preasure_pa, to_mm_m_c(preasure_pa)))
+    log("Pressure> {} pa ({} mm of mercury column)".format(pressure_pa, to_mm_m_c(pressure_pa)))
 
 
 def arduino_pressure_reader(serialPort):
@@ -93,8 +93,8 @@ def arduino_pressure_reader(serialPort):
         lineBytes = serialPort.readline()
         line = lineBytes.decode("utf-8").strip()
 
-        if line.startswith('Preasure:'):
-            add_preasure( extract_preasure(line) )
+        if line.startswith('Pressure:'):
+            add_pressure( extract_pressure(line) )
         else:
             log("> {}".format(line))
 
@@ -126,7 +126,7 @@ class PlotFigure:
 
         self.left_y_plot = self.fig.add_subplot(111)
         self.left_y_plot.set_xlabel('Time (s)')
-        self.left_y_plot.set_ylabel('Preasure (Pa)', color="#5b2c6f")
+        self.left_y_plot.set_ylabel('Pressure (Pa)', color="#5b2c6f")
 
 
     def setgeometry(self, pos=(0,0), size=(500,600)):
@@ -138,7 +138,7 @@ class PlotFigure:
     def plot(self, xvals, yvals):
         self.left_y_plot.cla()
         self.left_y_plot.set_xlabel('Time (s)')
-        self.left_y_plot.set_ylabel('Preasure (Pa)', color="#5b2c6f")
+        self.left_y_plot.set_ylabel('Pressure (Pa)', color="#5b2c6f")
         self.left_y_plot.plot(xvals, yvals, label='DATA', color='#2471a3', lw=3, linestyle='dashdot')
 
         self.canvas.draw()
@@ -159,6 +159,13 @@ class PlotFigure:
         self.fig.tight_layout()
         self.canvas.draw()
 
+    def plot_histogram(self, vals):
+        self.left_y_plot.cla()
+
+        counts, bins = np.histogram(vals)
+        self.left_y_plot.stairs(counts, bins, edgecolor='k', fill=True)
+        self.canvas.draw()
+
 
 class MyApp:
 
@@ -173,6 +180,7 @@ class MyApp:
         #self.__scan_mutex = threading.Lock()
         self.timeLine = PlotFigure(title="Sensor Plotter", root= self.top)
         self.gaussian = PlotFigure(title="Normal Gaussian Curve", root= self.top)
+        self.histogram= PlotFigure(title="Histogram", root= self.top)
 
         self.timeLine.setgeometry( pos=(int(screen_width * 0.1),100), size=(int(screen_width/2) - 100, int(screen_height * 0.8)) )
         self.gaussian.setgeometry( pos=(int(screen_width/2)+50, 100), size=(int(screen_width/2) - 100, int(screen_height * 0.8)) )
@@ -183,7 +191,7 @@ class MyApp:
 
 
     def __update_plot(self):
-        self.__plotPreasureTimeLine()
+        self.__plotPressureTimeLine()
         self.top.after(PLOT_UPDATE_EACH_ms, self.__update_plot)
 
 
@@ -192,12 +200,14 @@ class MyApp:
         self.top.mainloop()
 
 
-    def __plotPreasureTimeLine(self):
-        self.timeLine.plot(g_TimeLine,g_Preassures)
+    def __plotPressureTimeLine(self):
+        self.timeLine.plot(g_TimeLine,g_Pressures)
 
-        x, x_all, y1, y2 = calc_gaussian(g_Preassures)
+        x, x_all, y1, y2 = calc_gaussian(g_Pressures)
 
         self.gaussian.plot_gauss(x, x_all, y1, y2)
+
+        self.histogram.plot_histogram(g_Pressures)
 
 
 # ------------ program ----------------------
@@ -218,7 +228,7 @@ if not serialPort.isOpen():
 
 # ** Open CSV file *****
 g_CSVFile=open(CSV_FILE_NAME, "a")
-g_CSVFile.write("Tick;Preassure\n")
+g_CSVFile.write("Tick;Pressure\n")
 
 # ** SETUP CTRL+C signal handler
 signal.signal(signal.SIGINT, signal_handler)
